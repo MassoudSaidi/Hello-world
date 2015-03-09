@@ -1,0 +1,134 @@
+// OnStart script
+
+$LogD OnStart script
+
+// globals vars
+//------------------
+
+$LogD wifi or 3g card adress : "$oldAdress"
+$LogD Interface to use : "$myInterface"
+$LogD Old routes adress to disable :  "$defaultRoute"
+$LogD default route to restore : "$firstdefaultroute" 
+
+// script dependant variables
+//--------------------------------------
+
+// set the interface ip to use
+$myIp =  192.168.1.2  
+
+// (native = true , redsocks = false)  Should be set to false unless native udp is fixed
+$nativeUdp = false
+  
+
+$LogD adress to use :  "$myIp" 
+$LogD nativeUdp : "$nativeUdp"
+
+
+// IPTABLES : Create TETHER chain and Clean
+//------------------------------------------------------------
+
+$LogD Create TETHER chain and Clean...
+$iptables -t nat -N TETHER
+$iptables -t nat -F TETHER
+
+
+// IPTABLES : Log ICMP
+//-----------------------------
+
+$LogD ICMP...
+$iptables           -A INPUT -p icmp  -m state --state RELATED -j ACCEPT
+$iptables -t filter -A INPUT -p icmp -j ACCEPT
+$iptables -t filter -A OUTPUT -p icmp -j ACCEPT
+
+
+// Activate interface
+//------------------------------------------
+
+$LogD busybox ifconfig $myInterface up
+$busybox ifconfig $myInterface up
+
+// give an adress to the interface. TODO : check if myinterface don't already have an Ip
+//------------------------------------------
+
+if $myInterface = tun0
+   $LogD interface is tun0. don't set ip 
+else
+   $LogD ifconfig $myInterface $myIp  netmask 255.255.255.0
+   $busybox ifconfig $myInterface $myIp  netmask 255.255.255.0 
+fi
+         
+// ROUTE : delete old route adress
+//-------------------------------------------------
+       
+if "$defaultRoute"= "" then
+   $LogD no default route to delete
+else
+   $LogD delelete all default gateway
+   // special command to delete all default gateway
+   $delalldefaultgateway   
+fi
+
+// ROUTE : add route to default gateway 
+//-------------------------------------------------
+
+$LogD route add default gateway $myIp $myInterface
+$busybox route add default gateway $myIp  $myInterface    
+
+// DNS
+//----------------------------------------------
+
+$LogD setprop dns and ip
+setprop net.gprs.local-ip $myIp
+setprop dhcp.wlan0.dns1 8.8.8.8
+setprop dhcp.wlan0.gateway 192.168.1.1
+setprop dhcp.wlan0.ipaddress 192.168.1.4
+setprop dhcp.wlan0.server 192.168.1.1
+setprop dhcp.usb0.gateway 192.168.1.1
+setprop dhcp.usb0.ipaddress 192.168.1.4
+setprop dhcp.usb0.server 192.168.1.1
+setprop init.svc.dhcpcd_usb0 running
+setprop dhcp.usb0.dns1  8.8.8.8
+setprop dhcp.wlan0.dns1 8.8.8.8
+setprop net.dns1 8.8.8.8
+setprop net.usb0.dns1 8.8.8.8
+
+// redirect all communications to TETHER chain
+//------------------------------
+
+$LogD redirect all communications to TETHER chain
+$iptables -t nat -A OUTPUT -j TETHER
+
+if $lastResultSuccess = false then
+   $LogE forward output to tether nok
+   $LogE lastResultStdErr   : "$lastResultStdErr"
+fi
+
+// FORWARD TCP 
+//----------------------
+
+$LogD forward tcp to native handler
+$iptables -t nat -A TETHER -o $myInterface -p tcp --dport 1:41999 -j REDIRECT --to 42200
+$iptables -t nat -A TETHER -o $myInterface -p tcp --dport 42500:65535 -j REDIRECT --to 42200
+
+// FORWARD UDP 
+//----------------------
+
+if $nativeUdp = true then
+   $LogD forward udp to Native handler
+   $iptables -t nat -A TETHER -o $myInterface -p udp --dport 1:52 -j REDIRECT --to 42202
+   $iptables -t nat -A TETHER -o $myInterface -p udp --dport 53 -j REDIRECT --to 42201
+   $iptables -t nat -A TETHER -o $myInterface -p udp --dport 54:41999 -j REDIRECT --to 42202
+   $iptables -t nat -A TETHER -o $myInterface -p udp --dport 42500:65535 -j REDIRECT --to 42202
+else
+   // Forward all UDP ports to redsocks (53,...)
+   // redsocks (42001) will communicate with Socks5Server (port 42003) that return the UdpRelay (42004)
+   $LogD forward udp to redsocks 
+   $iptables -t nat -A TETHER -o $myInterface -p udp --dport 1:41999 -j REDIRECT --to 42001
+   $iptables -t nat -A TETHER -o $myInterface -p udp --dport 42500:65535 -j REDIRECT --to 42001
+fi
+
+$LogD OnStart script done
+
+// proxy_socks.sh start will be started 
+
+
